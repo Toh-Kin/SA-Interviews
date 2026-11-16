@@ -62,7 +62,7 @@ textarea{min-height:150px;resize:vertical}
 .seg button.on{background:var(--pri);color:#fff}
 .probe b{font-weight:700}
 .guide{margin-top:10px;font-size:15px;color:#33415c}.guide summary{cursor:pointer;font-weight:700;padding:6px 0}.guide div{white-space:pre-wrap;background:#eef3f8;border-radius:6px;padding:8px 10px}
-.probe{background:#fff8d6;border-left:4px solid #FAD201;border-radius:6px;padding:8px 10px;font-size:15px;color:#4a3b00;white-space:pre-wrap}
+.probe{background:#fff8d6;border-left:4px solid #FAD201;border-radius:6px;padding:8px 10px;font-size:15px;color:#4a3b00}.probe .pl{padding-left:16px;text-indent:-16px;margin-top:3px}
 #r-flag{background:#FAD201!important;color:#1b1b1b!important;font-weight:700}
 .bottombar{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:none;gap:10px;z-index:6}
 .bottombar.on{display:flex}
@@ -186,7 +186,8 @@ textarea{min-height:150px;resize:vertical}
       <div class="stat"><span>Questions with notes</span><b id="f-notes"></b></div>
       <div class="stat"><span>Marks</span><b id="f-flags"></b></div>
       <div id="f-warn" style="margin-top:10px"></div>
-      <label for="f-general">Overall impressions (optional)</label>
+      <div id="f-closing" hidden style="margin-top:14px"><div class="qmeta"><span>Closing question</span></div><div class="qtext" id="f-closing-q" style="white-space:pre-wrap"></div><details class="guide" id="f-closing-guide"><summary>What we want to hear</summary><div id="f-closing-guide-text"></div></details></div>
+      <label for="f-general" id="f-general-label">Overall impressions (optional)</label>
       <textarea id="f-general" style="min-height:110px" placeholder="Anything that does not fit a single question."></textarea>
     </div>
     <button class="btn ok block" id="f-save" style="min-height:56px">Stop recording and save</button>
@@ -243,7 +244,7 @@ textarea{min-height:150px;resize:vertical}
 <script>
 'use strict';
 /* ===== basics ===== */
-const APP_VERSION = '0.5.0';
+const APP_VERSION = '0.5.1';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const pad = n => String(n).padStart(2, '0');
@@ -451,10 +452,13 @@ async function beginInterview(meta){
   const existing = new Set((await dbAll('interviews')).map(r => r.id));
   while (existing.has(id)) id = base + '_' + (n++);
   const ext = /mp4/.test(mime) ? 'm4a' : /ogg/.test(mime) ? 'ogg' : 'webm';
-  const qs = questionsFor(meta.type).map(q => ({no:q.no, section:q.section, stage:q.stage, qEn:q.qEn, qRw:q.qRw, pEn:q.pEn, pRw:q.pRw, gEn:q.gEn || '', required:q.required}));
+  const snap = q => ({no:q.no, section:q.section, stage:q.stage, qEn:q.qEn, qRw:q.qRw, pEn:q.pEn, pRw:q.pRw, gEn:q.gEn || '', required:q.required});
+  const allQ = questionsFor(meta.type).map(snap);
+  const isClosing = q => /^\s*closing\s*$/i.test(q.section || '');
+  const qs = allQ.filter(q => !isClosing(q)), closing = allQ.find(isClosing) || null;
   if (!qs.length) { stream.getTracks().forEach(t => t.stop()); throw new Error('There are no questions for "' + meta.type + '". Check the Questions sheet, then update in Settings.'); }
   const rec = {id, fileBase:id, ext, mime: mime || '', status:'recording', ...meta, consent:true, date: d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()),
-    startTime: pad(d.getHours())+':'+pad(d.getMinutes()), questions: qs, notes:{}, visits:[], flags:[], general:'', elapsed:0, chunksDone:0,
+    startTime: pad(d.getHours())+':'+pad(d.getMinutes()), questions: qs, closing, notes:{}, visits:[], flags:[], general:'', elapsed:0, chunksDone:0,
     appVersion: APP_VERSION, device: navigator.userAgent.slice(0,140), demo: isDemo()};
   R = {rec, questions: qs, idx: 0, stream, recorder: null, seq: 0, writes: [], accum: 0, since: Date.now(), running: true, timer: null, saver: null};
   rec.visits.push({q: qs[0].no, t: 0});
@@ -489,7 +493,10 @@ function renderQuestion(){
   const [qa, qb] = langParts(q.qEn, q.qRw, mode);
   $('#q-text').textContent = qa; $('#q-text-rw').textContent = qb; $('#q-text-rw').style.display = qb ? '' : 'none';
   const [pa, pb] = langParts(q.pEn, q.pRw, mode); const pr = $('#q-probe');
-  pr.innerHTML = (pa || pb) ? '<b>Probe:</b> ' + esc(pa) + (pb ? '<br>' + esc(pb) : '') : ''; pr.style.display = (pa || pb) ? '' : 'none';
+  const pl = t => String(t || '').split(/\n+/).map(x => x.trim()).filter(Boolean).map(x => '<div class="pl">\u2022 ' + esc(x) + '</div>').join('');
+  pr.innerHTML = (pa || pb) ? '<b>Probe</b>' + pl(pa) + (pb ? '<div style="margin-top:6px">' + pl(pb) + '</div>' : '') : ''; pr.style.display = (pa || pb) ? '' : 'none';
+  const hasRw = R.questions.some(x => x.qRw || x.pRw) || !!(R.rec.closing && R.rec.closing.qRw);
+  $('#lang-seg').style.display = hasRw ? '' : 'none';
   const gd = $('#q-guide'); gd.style.display = q.gEn ? '' : 'none'; gd.open = false; $('#q-guide-text').textContent = (q.gEn || '').replace(/^\s*What we want to hear:\s*/i, '');
   $('#q-memo').value = R.rec.notes[String(q.no)] || '';
   const nf = R.rec.flags.filter(f => String(f.q) === String(q.no)).length;
@@ -544,6 +551,14 @@ function openFinish(){
   $('#f-flags').textContent = R.rec.flags.length;
   $('#f-warn').innerHTML = missing.length ? '<div class="banner">Required questions not reached: ' + missing.map(q => esc(q.no)).join(', ') + '. You can still save.</div>' : '';
   $('#f-general').value = R.rec.general || '';
+  const cl = R.rec.closing, cw = $('#f-closing');
+  cw.hidden = !cl;
+  $('#f-general-label').textContent = cl ? 'Notes for the closing question and overall impressions' : 'Overall impressions (optional)';
+  if (cl) {
+    const mode = getLangMode(), [ca, cb] = langParts(cl.qEn, cl.qRw, mode);
+    $('#f-closing-q').textContent = ca + (cb ? '\n' + cb : '');
+    const g = $('#f-closing-guide'); g.style.display = cl.gEn ? '' : 'none'; g.open = false; $('#f-closing-guide-text').textContent = cl.gEn || '';
+  }
   show('finish');
 }
 $('#f-back').onclick = () => show('run');
