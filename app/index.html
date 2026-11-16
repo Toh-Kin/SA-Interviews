@@ -61,6 +61,7 @@ textarea{min-height:150px;resize:vertical}
 .seg button{font:inherit;font-size:13px;font-weight:600;border:0;background:#fff;color:var(--mute);padding:6px 11px;min-height:34px}
 .seg button.on{background:var(--pri);color:#fff}
 .probe b{font-weight:700}
+.guide{margin-top:10px;font-size:15px;color:#33415c}.guide summary{cursor:pointer;font-weight:700;padding:6px 0}.guide div{white-space:pre-wrap;background:#eef3f8;border-radius:6px;padding:8px 10px}
 .probe{background:#fff8d6;border-left:4px solid #FAD201;border-radius:6px;padding:8px 10px;font-size:15px;color:#4a3b00;white-space:pre-wrap}
 #r-flag{background:#FAD201!important;color:#1b1b1b!important;font-weight:700}
 .bottombar{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:none;gap:10px;z-index:6}
@@ -168,6 +169,7 @@ textarea{min-height:150px;resize:vertical}
       <div class="qtext" id="q-text"></div>
       <div class="qtext rw" id="q-text-rw"></div>
       <div class="probe" id="q-probe"></div>
+      <details class="guide" id="q-guide"><summary>What we want to hear</summary><div id="q-guide-text"></div></details>
     </div>
     <label for="q-memo" style="margin-top:0">Notes for this question</label>
     <textarea id="q-memo" placeholder="Type, or tap the microphone on your keyboard to dictate."></textarea>
@@ -241,7 +243,7 @@ textarea{min-height:150px;resize:vertical}
 <script>
 'use strict';
 /* ===== basics ===== */
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.5.0';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const pad = n => String(n).padStart(2, '0');
@@ -251,22 +253,22 @@ const CHUNK = window.__CHUNK || 1024*1024;   // 1 MB pieces for upload (window._
 let toastT; function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(()=>t.classList.remove('on'), 2200); }
 
 /* Demo questions: used until real questions are loaded from the spreadsheet. */
-const DEFAULT_TYPES = ['DS Mentor', 'Student Teacher'];
+const DEFAULT_TYPES = ['Mentor Teacher', 'Student Teacher'];
 const DEMO_QUESTIONS = [
   {no:1, target:'Both', section:'Opening', stage:'', qEn:'(DEMO) Please tell me briefly about your role.', qRw:'(DEMO · Kinyarwanda text appears here)', pEn:'How long have you been in this role?', pRw:'', required:true},
-  {no:2, target:'DS Mentor', section:'A. Observation', stage:'Observation', qEn:'(DEMO) Think about the lesson you observed. What did you notice about the learners?', qRw:'', pEn:'What did you see or hear that made you say that?', pRw:'', required:true},
-  {no:3, target:'DS Mentor', section:'B. Feedback', stage:'Feedback', qEn:'(DEMO) What feedback did you give after the lesson?', qRw:'', pEn:'When? Face to face or written?', pRw:'', required:true},
-  {no:4, target:'DS Mentor', section:'C. Next action', stage:'Advice', qEn:'(DEMO) What advice or next action did you suggest?', qRw:'', pEn:'What exactly should they try next time?', pRw:'', required:true},
-  {no:5, target:'Student Teacher', section:'A. Observation', stage:'Observation', qEn:'(DEMO) After your lesson, what did your DS Mentor say about it?', qRw:'', pEn:'What did they notice about the learners?', pRw:'', required:true},
+  {no:2, target:'Mentor Teacher', section:'A. Observation', stage:'Observation', qEn:'(DEMO) Think about the lesson you observed. What did you notice about the learners?', qRw:'', pEn:'What did you see or hear that made you say that?', pRw:'', required:true},
+  {no:3, target:'Mentor Teacher', section:'B. Feedback', stage:'Feedback', qEn:'(DEMO) What feedback did you give after the lesson?', qRw:'', pEn:'When? Face to face or written?', pRw:'', required:true},
+  {no:4, target:'Mentor Teacher', section:'C. Next action', stage:'Advice', qEn:'(DEMO) What advice or next action did you suggest?', qRw:'', pEn:'What exactly should they try next time?', pRw:'', required:true},
+  {no:5, target:'Student Teacher', section:'A. Observation', stage:'Observation', qEn:'(DEMO) After your lesson, what did your Mentor Teacher say about it?', qRw:'', pEn:'What did they notice about the learners?', pRw:'', required:true},
   {no:6, target:'Student Teacher', section:'B. Feedback', stage:'Feedback', qEn:'(DEMO) What feedback did you receive? How was it given?', qRw:'', pEn:'When? Face to face or written?', pRw:'', required:true}
 ];
 const normQ = q => ({no: q.no, target: q.target || 'Both', section: q.section || '', stage: q.stage || '',
-  qEn: q.qEn ?? q.question ?? '', qRw: q.qRw || '', pEn: q.pEn ?? q.probe ?? '', pRw: q.pRw || '', required: !!q.required});
+  qEn: q.qEn ?? q.question ?? '', qRw: q.qRw || '', pEn: q.pEn ?? q.probe ?? '', pRw: q.pRw || '', gEn: q.gEn || '', required: !!q.required});
 const isBoth = t => !t || /^(both|all)$/i.test(t);
 function allQuestions(){ const c = getConfig(); return (c && c.questions && c.questions.length) ? c.questions.map(normQ) : DEMO_QUESTIONS; }
 function questionsFor(type){ return allQuestions().filter(q => isBoth(q.target) || String(q.target).toLowerCase() === String(type).toLowerCase()); }
 function interviewTypes(){ const c = getConfig(); return (c && c.types && c.types.length) ? c.types : DEFAULT_TYPES; }
-const typeCode = t => ({'ds mentor':'DSM', 'student teacher':'ST'}[String(t).toLowerCase()] || safe(t).slice(0,4).toUpperCase());
+const typeCode = t => ({'mentor teacher':'MT', 'ds mentor':'DSM', 'student teacher':'ST'}[String(t).toLowerCase()] || safe(t).slice(0,4).toUpperCase());
 /* which language(s) to show: 'both' | 'en' | 'rw' (remembered on this phone) */
 const getLangMode = () => localStorage.getItem('langMode') || 'both';
 function langParts(en, rw, mode){
@@ -416,7 +418,7 @@ $('#n-start').onclick = async () => {
   const iid = $('#n-id').value.trim().toUpperCase();
   const errs = [];
   if (!school) errs.push('Choose the school.');
-  if (!$('#n-type').value) errs.push('Choose who you are interviewing (DS Mentor or Student Teacher).');
+  if (!$('#n-type').value) errs.push('Choose who you are interviewing (Mentor Teacher or Student Teacher).');
   if (!/^[A-Z0-9]{1,12}$/.test(iid)) errs.push('Interviewee ID: letters/numbers only (initials), no spaces.');
   if (!who) errs.push('Choose the interviewer.');
   if (!$('#n-consent').checked) errs.push('Tick the consent box (consent must be obtained before recording).');
@@ -449,7 +451,7 @@ async function beginInterview(meta){
   const existing = new Set((await dbAll('interviews')).map(r => r.id));
   while (existing.has(id)) id = base + '_' + (n++);
   const ext = /mp4/.test(mime) ? 'm4a' : /ogg/.test(mime) ? 'ogg' : 'webm';
-  const qs = questionsFor(meta.type).map(q => ({no:q.no, section:q.section, stage:q.stage, qEn:q.qEn, qRw:q.qRw, pEn:q.pEn, pRw:q.pRw, required:q.required}));
+  const qs = questionsFor(meta.type).map(q => ({no:q.no, section:q.section, stage:q.stage, qEn:q.qEn, qRw:q.qRw, pEn:q.pEn, pRw:q.pRw, gEn:q.gEn || '', required:q.required}));
   if (!qs.length) { stream.getTracks().forEach(t => t.stop()); throw new Error('There are no questions for "' + meta.type + '". Check the Questions sheet, then update in Settings.'); }
   const rec = {id, fileBase:id, ext, mime: mime || '', status:'recording', ...meta, consent:true, date: d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()),
     startTime: pad(d.getHours())+':'+pad(d.getMinutes()), questions: qs, notes:{}, visits:[], flags:[], general:'', elapsed:0, chunksDone:0,
@@ -488,6 +490,7 @@ function renderQuestion(){
   $('#q-text').textContent = qa; $('#q-text-rw').textContent = qb; $('#q-text-rw').style.display = qb ? '' : 'none';
   const [pa, pb] = langParts(q.pEn, q.pRw, mode); const pr = $('#q-probe');
   pr.innerHTML = (pa || pb) ? '<b>Probe:</b> ' + esc(pa) + (pb ? '<br>' + esc(pb) : '') : ''; pr.style.display = (pa || pb) ? '' : 'none';
+  const gd = $('#q-guide'); gd.style.display = q.gEn ? '' : 'none'; gd.open = false; $('#q-guide-text').textContent = (q.gEn || '').replace(/^\s*What we want to hear:\s*/i, '');
   $('#q-memo').value = R.rec.notes[String(q.no)] || '';
   const nf = R.rec.flags.filter(f => String(f.q) === String(q.no)).length;
   $('#q-flags').textContent = nf ? '⚑ ' + nf : '';
