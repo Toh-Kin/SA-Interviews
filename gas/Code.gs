@@ -1,5 +1,5 @@
 /**
- * Interview Recorder - server (Google Apps Script), v0.1.0
+ * Interview Recorder - server (Google Apps Script), v0.3.1
  *
  * What it does
  *  - Hands the question list / school list / interviewer list to the phone app
@@ -7,25 +7,30 @@
  *  - Writes the interview details and per-question notes into this spreadsheet
  *
  * One-time setup: see README (run setup() once, then Deploy > New deployment > Web app).
+ * Updating from an older version: paste this file, set PASSCODE again, run setup() once (it upgrades the
+ * sheets in place), then Deploy > Manage deployments > Edit > New version.
  */
 
 // ===== EDIT THESE TWO LINES =====
-const PASSCODE = 'CHANGE-ME';   // shared secret typed (or sent by link) to the team's phones
+const PASSCODE = 'Rwanda2026!';   // shared secret typed (or sent by link) to the team's phones
 const FOLDER_ID = '';            // Drive folder ID for recordings. Leave '' to auto-create "DS Teacher Interviews" in your My Drive.
 // ================================
 
 const FOLDER_NAME = 'DS Teacher Interviews';
+const DEFAULT_TYPES = ['Mentor Teacher', 'Student Teacher'];
 const SHEETS = {Q: 'Questions', S: 'Schools', W: 'Interviewers', I: 'Interviews', N: 'Notes'};
-const HEAD_Q = ['No', 'Section', 'Stage', 'Question', 'Probe', 'Required'];
+const HEAD_Q = ['No', 'Target', 'Section', 'Stage', 'Question_EN', 'Question_RW', 'Probe_EN', 'Probe_RW', 'Required', 'Guide_EN'];
+// New columns are always added at the END so that older data stays aligned.
 const HEAD_I = ['interview_id', 'date', 'start_time', 'school', 'interviewee_id', 'interviewer', 'duration', 'consent_confirmed',
-                'questions_with_notes', 'audio_file', 'audio_url', 'overall_impressions', 'demo', 'app_version', 'device', 'uploaded_at'];
+                'questions_with_notes', 'audio_file', 'audio_url', 'overall_impressions', 'demo', 'app_version', 'device', 'uploaded_at',
+                'interviewee_type'];
 const HEAD_N = ['interview_id', 'date', 'school', 'interviewee_id', 'interviewer', 'q_no', 'stage', 'section', 'question',
-                'first_asked_at', 'notes', 'marks_at'];
+                'first_asked_at', 'notes', 'marks_at', 'question_rw', 'interviewee_type'];
 
 /* ---------- web app entry points ---------- */
 
 function doGet() {
-  return ContentService.createTextOutput('Interview Recorder server is running (v0.1.0).');
+  return ContentService.createTextOutput('Interview Recorder server is running (v0.3.1).');
 }
 
 function doPost(e) {
@@ -48,7 +53,7 @@ function out_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
-/* ---------- one-time setup (run from the editor) ---------- */
+/* ---------- one-time setup / upgrade (run from the editor) ---------- */
 
 function setup() {
   const props = PropertiesService.getScriptProperties();
@@ -56,28 +61,40 @@ function setup() {
   if (!ss) throw new Error('Open this script from the spreadsheet: Extensions > Apps Script.');
   props.setProperty('SS_ID', ss.getId());
 
+  // Questions: create with samples, or upgrade an older layout in place (data is kept)
   const q = sheet_(ss, SHEETS.Q, HEAD_Q);
   if (q.getLastRow() < 2) {
-    q.getRange(2, 1, 6, 6).setValues([
-      [1, 'A. Observation', 'Observation', 'Think about the lesson you observed. What did you notice about the learners?', 'What did you see or hear that made you say that?', 'Y'],
-      [2, 'A. Observation', 'Observation', 'What did the student-teacher do well in that lesson?', 'Can you give one specific moment?', 'Y'],
-      [3, 'B. Feedback', 'Feedback', 'What feedback did you give after the lesson?', 'When? Face to face or written? How long did it take?', 'Y'],
-      [4, 'B. Feedback', 'Feedback', 'Why did you choose that feedback?', 'What did you want the student-teacher to understand?', ''],
-      [5, 'C. Next action', 'Advice', 'What advice or next action did you suggest?', 'What exactly should they try in the next lesson?', 'Y'],
-      [6, 'D. Follow-up', 'Re-observation', 'Did you observe the student-teacher again after the advice?', 'If yes: what changed? If no: what got in the way?', 'Y']
+    q.getRange(2, 1, 10, HEAD_Q.length).setValues([
+      [1, 'Both', 'Opening', '', 'Please tell me briefly about your role.', '(Kinyarwanda translation here)', 'How long have you been in this role?', '', 'Y', ''],
+      [2, 'Mentor Teacher', 'A. Observation', 'Observation', 'Think about the lesson you observed. What did you notice about the learners?', '', 'What did you see or hear that made you say that?', '', 'Y', 'What we want to hear: what the learners did, in their own words, with a real example.'],
+      [3, 'Mentor Teacher', 'A. Observation', 'Observation', 'What did the student-teacher do well in that lesson?', '', 'Can you give one specific moment?', '', 'Y', ''],
+      [4, 'Mentor Teacher', 'B. Feedback', 'Feedback', 'What feedback did you give after the lesson?', '', 'When? Face to face or written? How long did it take?', '', 'Y', ''],
+      [5, 'Mentor Teacher', 'C. Next action', 'Advice', 'What advice or next action did you suggest?', '', 'What exactly should they try in the next lesson?', '', 'Y', ''],
+      [6, 'Mentor Teacher', 'D. Follow-up', 'Re-observation', 'Did you observe the student-teacher again after the advice?', '', 'If yes: what changed? If no: what got in the way?', '', 'Y', ''],
+      [7, 'Student Teacher', 'A. Observation', 'Observation', 'After your lesson, what did your Mentor Teacher say about it?', '', 'What did they notice about the learners?', '', 'Y', ''],
+      [8, 'Student Teacher', 'B. Feedback', 'Feedback', 'What feedback did you receive? How was it given?', '', 'When? Face to face or written?', '', 'Y', ''],
+      [9, 'Student Teacher', 'C. Next action', 'Advice', 'What advice or next action did you get, and what did you do with it?', '', 'Did you try it in a later lesson?', '', 'Y', ''],
+      [10, 'Student Teacher', 'D. Follow-up', 'Re-observation', 'Did your Mentor Teacher observe you again? Was it useful?', '', 'What changed, if anything?', '', '', '']
     ]);
+  } else {
+    upgradeQuestionsSheet_(q);
   }
-  q.getRange('A1').setNote('Question number (1, 2, 3...). Rows are shown to interviewers in this order.');
-  q.getRange('C1').setNote('Optional label shown as a small tag: Observation / Feedback / Advice / Re-observation ...');
-  q.getRange('E1').setNote('Optional follow-up prompt shown under the question.');
-  q.getRange('F1').setNote('Y = required, blank = optional.');
+  q.getRange('A1').setNote('Question number. Rows are shown to interviewers in this order.');
+  q.getRange('B1').setNote('Who is asked: Mentor Teacher / Student Teacher / Both (blank = Both). The interviewer picks the type at the start.');
+  q.getRange('C1').setNote('Heading shown above the question.');
+  q.getRange('D1').setNote('Optional small tag: Observation / Feedback / Advice / Re-observation ... (useful when comparing across surveys).');
+  q.getRange('E1').setNote('Question in English.');
+  q.getRange('F1').setNote('Question in Kinyarwanda. Leave blank if there is none; the app then shows English only.');
+  q.getRange('G1').setNote('Optional follow-up prompt (English).');
+  q.getRange('H1').setNote('Optional follow-up prompt (Kinyarwanda).');
+  q.getRange('I1').setNote('Y = required, blank = optional.');
 
   const s = sheet_(ss, SHEETS.S, ['School']);
   if (s.getLastRow() < 2) s.getRange(2, 1, 2, 1).setValues([['Sample School A (edit me)'], ['Sample School B (edit me)']]);
   const w = sheet_(ss, SHEETS.W, ['Interviewer']);
   if (w.getLastRow() < 2) w.getRange(2, 1, 3, 1).setValues([['Kin'], ['Local member 1 (edit me)'], ['Local member 2 (edit me)']]);
-  sheet_(ss, SHEETS.I, HEAD_I);
-  sheet_(ss, SHEETS.N, HEAD_N);
+  ensureHeader_(sheet_(ss, SHEETS.I, HEAD_I), HEAD_I);
+  ensureHeader_(sheet_(ss, SHEETS.N, HEAD_N), HEAD_N);
   const first = ss.getSheetByName('Sheet1') || ss.getSheetByName('シート1');
   if (first && ss.getSheets().length > 1 && first.getLastRow() === 0) ss.deleteSheet(first);
 
@@ -96,6 +113,19 @@ function sheet_(ss, name, header) {
     sh.setFrozenRows(1);
   }
   return sh;
+}
+
+// Add any header names that are missing, at the end of row 1.
+function ensureHeader_(sh, head) {
+  const lastCol = Math.max(1, sh.getLastColumn());
+  const cur = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(v => String(v).trim());
+  let col = cur.filter(String).length;
+  head.forEach(h => {
+    if (cur.indexOf(h) < 0) {
+      col++;
+      sh.getRange(1, col, 1, 1).setValues([[h]]).setFontWeight('bold').setBackground('#e0f2fe');
+    }
+  });
 }
 
 function ss_() {
@@ -135,24 +165,84 @@ function mmss_(ms) {
   return (h ? h + ':' + p_(m, 2) : p_(m, 2)) + ':' + p_(x, 2);
 }
 
-/* ---------- config for the phones ---------- */
+/* ---------- questions: read by header NAME, so old and new layouts both work ---------- */
+
+const Q_ALIASES = {
+  no: ['no', 'number', '#'],
+  target: ['target', 'respondent', 'for', 'type', 'interviewee'],
+  section: ['section'],
+  stage: ['stage'],
+  qEn: ['questionen', 'questionenglish', 'question', 'en', 'english'],
+  qRw: ['questionrw', 'questionkinyarwanda', 'questionkin', 'rw', 'kinyarwanda'],
+  pEn: ['probeen', 'probeenglish', 'probe'],
+  pRw: ['probekinyarwanda', 'probe_rw', 'proberw', 'probekin'],
+  required: ['required', 'mandatory'],
+  gEn: ['guideen', 'guide', 'guidingquestion', 'whatwewanttohear']
+};
+
+function norm_(h) { return String(h).toLowerCase().replace(/[\s_()\-]/g, ''); }
+
+function qColumns_(headerRow) {
+  const idx = headerRow.map(norm_);
+  const cols = {};
+  Object.keys(Q_ALIASES).forEach(k => {
+    cols[k] = -1;
+    for (let a = 0; a < Q_ALIASES[k].length && cols[k] < 0; a++) cols[k] = idx.indexOf(norm_(Q_ALIASES[k][a]));
+  });
+  return cols;
+}
+
+function readQuestionRows_(sh) {
+  const lastCol = Math.max(1, sh.getLastColumn());
+  const n = Math.max(0, sh.getLastRow() - 1);
+  const head = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  const cols = qColumns_(head);
+  const rows = n ? sh.getRange(2, 1, n, lastCol).getValues() : [];
+  const get = (r, k) => (cols[k] >= 0 ? r[cols[k]] : '');
+  return rows.map((r, i) => ({
+    no: get(r, 'no') === '' ? i + 1 : get(r, 'no'),
+    target: String(get(r, 'target')).trim(),
+    section: String(get(r, 'section')).trim(),
+    stage: String(get(r, 'stage')).trim(),
+    qEn: String(get(r, 'qEn')).trim(),
+    qRw: String(get(r, 'qRw')).trim(),
+    pEn: String(get(r, 'pEn')).trim(),
+    pRw: String(get(r, 'pRw')).trim(),
+    gEn: String(get(r, 'gEn')).trim(),
+    required: /^(y|yes|true|1|required)$/i.test(String(get(r, 'required')).trim())
+  })).filter(q => q.qEn !== '' || q.qRw !== '');
+}
+
+// Old layout (No, Section, Stage, Question, Probe, Required) -> new layout, keeping every row.
+function upgradeQuestionsSheet_(sh) {
+  const lastCol = Math.max(1, sh.getLastColumn());
+  const cur = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(v => String(v).trim());
+  const same = HEAD_Q.every((h, i) => cur[i] === h) ;
+  if (same) return;
+  const rows = readQuestionRows_(sh);
+  sh.clear();
+  sh.getRange(1, 1, 1, HEAD_Q.length).setValues([HEAD_Q]).setFontWeight('bold').setBackground('#e0f2fe');
+  sh.setFrozenRows(1);
+  if (rows.length) {
+    sh.getRange(2, 1, rows.length, HEAD_Q.length).setValues(rows.map(q =>
+      [q.no, q.target || 'Both', q.section, q.stage, q.qEn, q.qRw, q.pEn, q.pRw, q.required ? 'Y' : '', q.gEn || '']));
+  }
+}
 
 function getConfig_() {
   const ss = ss_();
-  const qs = ss.getSheetByName(SHEETS.Q);
-  const n = Math.max(0, qs.getLastRow() - 1);
-  const rows = n ? qs.getRange(2, 1, n, 6).getValues() : [];
-  const questions = rows
-    .filter(r => String(r[3]).trim() !== '')
-    .map((r, i) => ({
-      no: (r[0] === '' ? i + 1 : r[0]),
-      section: String(r[1]).trim(),
-      stage: String(r[2]).trim(),
-      question: String(r[3]).trim(),
-      probe: String(r[4]).trim(),
-      required: /^(y|yes|true|1|required)$/i.test(String(r[5]).trim())
-    }));
-  return {questions: questions, schools: col1_(ss.getSheetByName(SHEETS.S)), interviewers: col1_(ss.getSheetByName(SHEETS.W))};
+  const questions = readQuestionRows_(ss.getSheetByName(SHEETS.Q)).map(q => ({
+    no: q.no, target: (!q.target || /^(both|all)$/i.test(q.target)) ? 'Both' : q.target,
+    section: q.section, stage: q.stage, qEn: q.qEn, qRw: q.qRw, pEn: q.pEn, pRw: q.pRw, gEn: q.gEn, required: q.required
+  }));
+  const types = [];
+  questions.forEach(q => { if (q.target !== 'Both' && types.indexOf(q.target) < 0) types.push(q.target); });
+  return {
+    questions: questions,
+    types: types.length ? types : DEFAULT_TYPES,
+    schools: col1_(ss.getSheetByName(SHEETS.S)),
+    interviewers: col1_(ss.getSheetByName(SHEETS.W))
+  };
 }
 
 /* ---------- audio ---------- */
@@ -176,7 +266,10 @@ function audioFinalize_(b) {
   const same = main.getFilesByName(baseName);
   while (same.hasNext()) {
     const f = same.next();
-    if (f.getDescription() === marker && !f.isTrashed()) return {ok: true, url: f.getUrl(), name: f.getName()};
+    if (f.getDescription() === marker && !f.isTrashed()) {
+      trashPieces_(b.id);   // clean up any pieces re-sent by a retry
+      return {ok: true, url: f.getUrl(), name: f.getName()};
+    }
   }
 
   const tmp = tmpFolder_();
@@ -200,6 +293,12 @@ function audioFinalize_(b) {
   return {ok: true, url: file.getUrl(), name: file.getName()};
 }
 
+function trashPieces_(id) {
+  const tmp = tmpFolder_();
+  const it = tmp.getFiles();
+  while (it.hasNext()) { const f = it.next(); if (f.getName().indexOf(id + '__') === 0) f.setTrashed(true); }
+}
+
 /* ---------- interview details + notes ---------- */
 
 function saveInterview_(r) {
@@ -208,10 +307,14 @@ function saveInterview_(r) {
   try {
     const ss = ss_();
     const sI = ss.getSheetByName(SHEETS.I), sN = ss.getSheetByName(SHEETS.N);
-    const withNotes = (r.questions || []).filter(q => String((r.notes || {})[String(q.no)] || '').trim()).length;
+    ensureHeader_(sI, HEAD_I);
+    ensureHeader_(sN, HEAD_N);
+    const qs = r.questions || [];
+    const withNotes = qs.filter(q => String((r.notes || {})[String(q.no)] || '').trim()).length;
     const row = [r.id, r.date, r.startTime, r.school, r.interviewee, r.interviewer, mmss_((r.durationSec || 0) * 1000),
-                 r.consent ? 'Yes' : 'No', withNotes + '/' + (r.questions || []).length, r.audioName || '', r.audioUrl || '',
-                 r.general || '', r.demo ? 'DEMO' : '', r.appVersion || '', r.device || '', new Date().toISOString()];
+                 r.consent ? 'Yes' : 'No', withNotes + '/' + qs.length, r.audioName || '', r.audioUrl || '',
+                 r.general || '', r.demo ? 'DEMO' : '', r.appVersion || '', r.device || '', new Date().toISOString(),
+                 r.type || ''];
     upsertRow_(sI, r.id, row);
 
     // replace this interview's note rows
@@ -220,11 +323,11 @@ function saveInterview_(r) {
       const ids = sN.getRange(2, 1, last - 1, 1).getValues();
       for (let i = ids.length - 1; i >= 0; i--) if (String(ids[i][0]) === String(r.id)) sN.deleteRow(i + 2);
     }
-    const rows = (r.questions || []).map(q => {
+    const rows = qs.map(q => {
       const v = (r.visits || []).filter(x => String(x.q) === String(q.no))[0];
       const marks = (r.flags || []).filter(x => String(x.q) === String(q.no)).map(x => mmss_(x.t)).join(', ');
-      return [r.id, r.date, r.school, r.interviewee, r.interviewer, q.no, q.stage || '', q.section || '', q.question,
-              v ? mmss_(v.t) : '', String((r.notes || {})[String(q.no)] || ''), marks];
+      return [r.id, r.date, r.school, r.interviewee, r.interviewer, q.no, q.stage || '', q.section || '', q.qEn || '',
+              v ? mmss_(v.t) : '', String((r.notes || {})[String(q.no)] || ''), marks, q.qRw || '', r.type || ''];
     });
     if (rows.length) {
       const start = sN.getLastRow() + 1;
